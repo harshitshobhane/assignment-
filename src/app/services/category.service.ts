@@ -141,6 +141,7 @@ export class CategoryService {
   scrollToCategory(categoryName: string) {
     const element = document.getElementById(`category-${categoryName}`);
     if (element) {
+      this.setSelectedCategory(categoryName);
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
@@ -153,11 +154,12 @@ export class CategoryService {
         const containerRect = container.getBoundingClientRect();
         const elementRect = categoryElement.getBoundingClientRect();
         
-        if (elementRect.left < containerRect.left) {
-          container.scrollLeft -= (containerRect.left - elementRect.left);
-        } else if (elementRect.right > containerRect.right) {
-          container.scrollLeft += (elementRect.right - containerRect.right);
-        }
+        const scrollLeft = elementRect.left + container.scrollLeft - (containerRect.width / 2) + (elementRect.width / 2);
+        
+        container.scrollTo({
+          left: scrollLeft,
+          behavior: 'smooth'
+        });
       }
     }
   }

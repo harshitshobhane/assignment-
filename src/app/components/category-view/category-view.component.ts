@@ -1,4 +1,4 @@
-import { Component, OnInit, AfterViewInit, ElementRef, ViewChild, PLATFORM_ID, Inject } from '@angular/core';
+import { Component, OnInit, AfterViewInit, ElementRef, ViewChild, PLATFORM_ID, Inject, Renderer2, NgZone } from '@angular/core';
 import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { CategoryService } from '../../services/category.service';
 import { Category } from '../../models/category.model';
@@ -10,6 +10,7 @@ import { Category } from '../../models/category.model';
   template: `
     <div class="category-container">
       <nav class="category-nav" #categoryNav>
+        <div class="category-indicator" #categoryIndicator></div>
         @for (category of categories(); track category) {
           <div 
             class="category-item" 
@@ -70,6 +71,7 @@ import { Category } from '../../models/category.model';
       margin-bottom: 2rem;
       scrollbar-width: none;
       -ms-overflow-style: none;
+      position: relative;
     }
     .category-nav::-webkit-scrollbar {
       display: none;
@@ -180,20 +182,37 @@ import { Category } from '../../models/category.model';
         margin-bottom: 1rem;
       }
     }
+    .category-indicator {
+      position: absolute;
+      bottom: 6px;
+      height: 4px;
+      background: linear-gradient(90deg, #6366f1 0%, #3b82f6 100%);
+      border-radius: 2px;
+      transition: left 0.35s cubic-bezier(.4,0,.2,1), width 0.35s cubic-bezier(.4,0,.2,1), opacity 0.2s;
+      z-index: 10;
+      left: 0;
+      width: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
   `]
 })
 export class CategoryViewComponent implements OnInit, AfterViewInit {
   @ViewChild('dataContainer') dataContainer!: ElementRef;
   @ViewChild('categoryNav') categoryNav!: ElementRef;
+  @ViewChild('categoryIndicator') categoryIndicator!: ElementRef;
 
   categories;
   data;
   selectedCategory;
   private observer: IntersectionObserver | null = null;
+  private isScrolling = false;
 
   constructor(
     private categoryService: CategoryService,
-    @Inject(PLATFORM_ID) private platformId: Object
+    @Inject(PLATFORM_ID) private platformId: Object,
+    private renderer: Renderer2,
+    private ngZone: NgZone
   ) {
     this.categories = this.categoryService.getCategories();
     this.data = this.categoryService.getData();
@@ -202,16 +221,30 @@ export class CategoryViewComponent implements OnInit, AfterViewInit {
     if (isPlatformBrowser(this.platformId)) {
       this.observer = new IntersectionObserver(
         (entries) => {
-          entries.forEach(entry => {
-            if (entry.isIntersecting) {
-              const categoryName = entry.target.id.replace('category-', '');
-              this.categoryService.setSelectedCategory(categoryName);
-              this.categoryService.scrollCategoryIntoView(categoryName);
-            }
-          });
+          if (this.isScrolling) return;
+
+          // Find the entry whose top is closest to the top of the scroll container and is intersecting
+          const visibleEntries = entries.filter(entry => entry.isIntersecting);
+          if (visibleEntries.length > 0) {
+            // Find the entry closest to the top (or center)
+            const containerTop = this.dataContainer?.nativeElement.getBoundingClientRect().top ?? 0;
+            let closestEntry = visibleEntries[0];
+            let minDistance = Math.abs(closestEntry.boundingClientRect.top - containerTop);
+            visibleEntries.forEach(entry => {
+              const distance = Math.abs(entry.boundingClientRect.top - containerTop);
+              if (distance < minDistance) {
+                closestEntry = entry;
+                minDistance = distance;
+              }
+            });
+            const categoryName = closestEntry.target.id.replace('category-', '');
+            this.categoryService.setSelectedCategory(categoryName);
+            this.categoryService.scrollCategoryIntoView(categoryName);
+          }
         },
         {
-          threshold: 0.5
+          threshold: 0.5,
+          rootMargin: '-100px 0px'
         }
       );
     }
@@ -226,11 +259,41 @@ export class CategoryViewComponent implements OnInit, AfterViewInit {
         this.observer?.observe(section);
       });
     }
+    this.updateIndicator();
+  }
+
+  ngAfterViewChecked() {
+    this.updateIndicator();
+  }
+
+  updateIndicator() {
+    this.ngZone.runOutsideAngular(() => {
+      if (!this.categoryNav || !this.categoryIndicator) return;
+      const selected = this.categoryNav.nativeElement.querySelector('.category-item.active');
+      const indicator = this.categoryIndicator.nativeElement;
+      if (selected) {
+        const navRect = this.categoryNav.nativeElement.getBoundingClientRect();
+        const selRect = selected.getBoundingClientRect();
+        const left = selRect.left - navRect.left + this.categoryNav.nativeElement.scrollLeft;
+        const width = selRect.width;
+        this.renderer.setStyle(indicator, 'left', `${left}px`);
+        this.renderer.setStyle(indicator, 'width', `${width}px`);
+        this.renderer.setStyle(indicator, 'opacity', '1');
+      } else {
+        this.renderer.setStyle(indicator, 'opacity', '0');
+      }
+    });
   }
 
   onCategoryClick(category: string) {
+    this.isScrolling = true;
     this.categoryService.setSelectedCategory(category);
+    this.updateIndicator();
     this.categoryService.scrollToCategory(category);
+    setTimeout(() => {
+      this.isScrolling = false;
+      this.updateIndicator();
+    }, 1000);
   }
 
   onImgError(event: Event) {
